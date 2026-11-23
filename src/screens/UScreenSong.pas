@@ -3162,7 +3162,8 @@ begin
 
   if (PlaylistMan.CurPlayList <> -1) then
   begin
-    if PlaylistMan.ReloadPlayList(PlaylistMan.CurPlayList) then
+    if PlaylistMan.ReloadPlayList(PlaylistMan.CurPlayList,
+      PlaylistMan.Playlists[PlaylistMan.CurPlayList].Filename.Equals('queue.upl', true)) then
     begin
       NextSongID := SongIndex;
       if (NextSongID = -1) then

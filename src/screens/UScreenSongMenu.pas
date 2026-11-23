@@ -527,6 +527,7 @@ begin
 
     SM_Playlist_Load:
       begin
+        PlaylistMan.DiscoverQueuePlaylist;
         ID := 'ID_017';
         CurMenu := sMenu;
         Text[0].Text := Language.Translate('SONG_MENU_NAME_PLAYLIST_LOAD');
@@ -1049,7 +1050,7 @@ begin
           6: // button 4
             begin
               // load playlist
-              PlaylistMan.ReloadPlaylist(SelectValue3);
+              PlaylistMan.ReloadPlaylist(SelectValue3, true);
               PlaylistMan.SetPlayList(SelectValue3);
               Visible := false;
               ScreenSong.SetScrollRefresh;

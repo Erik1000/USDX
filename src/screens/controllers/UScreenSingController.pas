@@ -209,6 +209,7 @@ uses
   ULog,
   UNote,
   URecord,
+  URemoteStatus,
   UParty,
   UPathUtils,
   USong,
@@ -663,6 +664,8 @@ begin
 
     Paused := false;
   end;
+  if Assigned(RemoteStatus) then
+    RemoteStatus.Paused(Paused);
 end;
 
 constructor TScreenSingController.Create;
@@ -857,6 +860,7 @@ end;
 procedure TScreenSingController.onShowFinish;
 var
   PlayerIndex: integer;
+  AudioOpened: Boolean;
 begin
   // hide cursor on singscreen show
   Display.SetCursor;
@@ -888,9 +892,9 @@ begin
   MidiFadeIn := false;
 
   if (not Assigned(CurrentSong.Karaoke)) or (CurrentSong.Karaoke = PATH_NONE) then
-    AudioPlayback.Open(CurrentSong.Path.Append(CurrentSong.Audio), nil)
+    AudioOpened := AudioPlayback.Open(CurrentSong.Path.Append(CurrentSong.Audio), nil)
   else
-    AudioPlayback.Open(CurrentSong.Path.Append(CurrentSong.Audio), CurrentSong.Path.Append(CurrentSong.Karaoke));
+    AudioOpened := AudioPlayback.Open(CurrentSong.Path.Append(CurrentSong.Audio), CurrentSong.Path.Append(CurrentSong.Karaoke));
 
   if ScreenSong.Mode = smMedley then
     AudioPlayback.SetVolume(0.1)
@@ -932,6 +936,10 @@ begin
     AudioPlayback.FadeIn(CurrentSong.Medley.FadeIn_time, 1.0)
   else
     AudioPlayback.Play();
+
+  if AudioOpened and Assigned(RemoteStatus) then
+    RemoteStatus.Started(CurrentSong.Artist, CurrentSong.Title,
+      CurrentSong.Path.Append(CurrentSong.FileName).ToUTF8());
 
   // Send Score
   Act_MD5Song := CurrentSong.MD5;
@@ -1384,6 +1392,8 @@ end;
 
 procedure TScreenSingController.OnHide;
 begin
+  if Assigned(RemoteStatus) then
+    RemoteStatus.Stopped;
   // close video files
   fVideoClip := nil;
   fCurrentVideo := nil;
@@ -1601,6 +1611,8 @@ var
   len, num: integer;
 
 begin
+  if Assigned(RemoteStatus) then
+    RemoteStatus.Stopped;
   Log.LogStatus('TScreenSingController.Finish', 'TScreenSingController.Finish');
   AudioInput.CaptureStop;
   AudioPlayback.Stop;

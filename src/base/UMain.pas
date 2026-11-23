@@ -86,6 +86,7 @@ uses
   UPlaylist,
   UMusic,
   URecord,
+  URemoteStatus,
   UBeatTimer,
   UPlatform,
   URenderer,
@@ -107,6 +108,7 @@ uses
 procedure Main;
 var
   WindowTitle: string;
+  RemoteStatusPort: Integer;
 begin
   {$IFNDEF Debug}
   try
@@ -235,6 +237,14 @@ begin
 
     LuaCore.DumpPlugins;
 
+    // The local companion is opt-in. The game works normally without it.
+    if TryStrToInt(GetEnvironmentVariable('USDX_STATUS_PORT'), RemoteStatusPort) and
+       (RemoteStatusPort > 0) and (RemoteStatusPort <= 65535) then
+    begin
+      RemoteStatus := TRemoteStatus.Create(RemoteStatusPort);
+      RemoteStatus.Start;
+    end;
+
     { prepare software cursor }
     Display.SetCursor;
 
@@ -259,6 +269,8 @@ begin
     // TODO:
     // call an uninitialize routine for every initialize step
     // or at least use the corresponding Free methods
+
+    FreeAndNil(RemoteStatus);
 
     Log.LogStatus('Closing DB file', 'Finalization');
     if (DataBase <> nil) then

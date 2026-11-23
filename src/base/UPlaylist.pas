@@ -45,6 +45,7 @@ type
     Artist: UTF8String;
     Title:  UTF8String;
     SongID: Integer;
+    SongFile: UTF8String; // optional exact path, supplied by a companion
   end;
 
   APlaylistItem = array of TPlaylistItem;
@@ -66,6 +67,8 @@ type
     private
       SongOrderDirty: Boolean;
       function  FindSongIndexByNames(const Artist, Title: UTF8String): Integer;
+      function  FindSongIndexByFile(const SongFile: UTF8String): Integer;
+      function  FindSongIndex(const Item: TPlaylistItem): Integer;
       procedure MoveSongIndex(const OldIndex, NewIndex: Integer);
       procedure ApplyPlaylistOrder(Index: Cardinal);
       procedure ReindexAllPlaylists;
@@ -79,8 +82,9 @@ type
 
       constructor Create;
       procedure   LoadPlayLists;
+      procedure   DiscoverQueuePlaylist;
       function    LoadPlayList(Index: Cardinal; const Filename: IPath): Boolean;
-      function    ReloadPlayList(Index: Cardinal): Boolean;
+      function    ReloadPlayList(Index: Cardinal; Force: Boolean = False): Boolean;
       procedure   SavePlayList(Index: Cardinal);
 
       procedure   RestoreSongOrder;
@@ -167,6 +171,26 @@ begin
   end;
 end;
 
+// Discover the companion's queue even when it was created after game startup.
+procedure TPlayListManager.DiscoverQueuePlaylist;
+var
+  I, Index: Integer;
+  QueueFile: IPath;
+begin
+  for I := 0 to High(Playlists) do
+    if Playlists[I].Filename.Equals('queue.upl', true) then
+      Exit;
+
+  QueueFile := PlaylistPath.Append('queue.upl');
+  if not QueueFile.IsFile then
+    Exit;
+
+  Index := Length(Playlists);
+  SetLength(Playlists, Index + 1);
+  if not LoadPlayList(Index, QueueFile.GetName) then
+    SetLength(Playlists, Index);
+end;
+
 //----------
 //LoadPlayList - Load a Playlist in the Array
 //----------
@@ -194,6 +218,7 @@ var
   SongID: Integer;
   Len: Integer;
   FilenameAbs: IPath;
+  PendingSongFile: UTF8String;
 begin
   //Load File
   try
@@ -212,7 +237,8 @@ begin
   Playlists[Index].Filename := Filename;
   Playlists[Index].Name := '';
   Playlists[Index].FixedOrder := False;
-  Playlists[Index].LastRead := FileAge(Filename.ToNative);
+  Playlists[Index].LastRead := FileAge(FilenameAbs.ToNative);
+  PendingSongFile := '';
 
   //Read Until End of File
   while TextStream.ReadLine(Line) do
@@ -234,12 +260,17 @@ begin
             Line := Trim(copy(Line, PosDelimiter + 1,Length(Line) - PosDelimiter));
             PlayLists[Index].FixedOrder := (UpperCase(Line) = 'ON');
           end
+          else if (Uppercase(Trim(copy(Line, 2, PosDelimiter - 2))) = 'USDX_FILE') then
+            PendingSongFile := Trim(copy(Line, PosDelimiter + 1, Length(Line) - PosDelimiter))
             
         end
         //Song Entry
         else
         begin
-          SongID := FindSong(Trim(copy(Line, 1, PosDelimiter - 1)), Trim(copy(Line, PosDelimiter + 1, Length(Line) - PosDelimiter)));
+          if PendingSongFile <> '' then
+            SongID := FindSongIndexByFile(PendingSongFile)
+          else
+            SongID := FindSong(Trim(copy(Line, 1, PosDelimiter - 1)), Trim(copy(Line, PosDelimiter + 1, Length(Line) - PosDelimiter)));
           if (SongID <> -1) then
           begin
             Len := Length(PlayLists[Index].Items);
@@ -247,10 +278,12 @@ begin
 
             PlayLists[Index].Items[Len].SongID := SongID;
 
-            PlayLists[Index].Items[Len].Artist := Trim(copy(Line, 1, PosDelimiter - 1));
-            PlayLists[Index].Items[Len].Title  := Trim(copy(Line, PosDelimiter + 1, Length(Line) - PosDelimiter));
+            PlayLists[Index].Items[Len].Artist := CatSongs.Song[SongID].Artist;
+            PlayLists[Index].Items[Len].Title  := CatSongs.Song[SongID].Title;
+            PlayLists[Index].Items[Len].SongFile := PendingSongFile;
           end
           else Log.LogError('Could not find Song in Playlist: ' + PlayLists[Index].Filename.ToNative + ', ' + Line);
+          PendingSongFile := '';
         end;
       end;
     end;
@@ -269,7 +302,7 @@ end;
 //----------
 //ReloadPlayList - Reload a Playlist in the Array
 //----------
-function TPlayListManager.ReloadPlayList(Index: Cardinal): Boolean;
+function TPlayListManager.ReloadPlayList(Index: Cardinal; Force: Boolean): Boolean;
 var
   PlaylistFile: IPath;
 begin
@@ -280,7 +313,8 @@ begin
   end;
 
   PlaylistFile := PlaylistPath.Append(Playlists[Index].Filename);
-  if not FileExists(PlaylistFile.ToNative) or (FileAge(PlaylistFile.ToNative) <= Playlists[Index].LastRead) then
+  if not FileExists(PlaylistFile.ToNative) or
+     ((not Force) and (FileAge(PlaylistFile.ToNative) <= Playlists[Index].LastRead)) then
   begin
     Result := false;
     Exit;
@@ -329,6 +363,8 @@ begin
 
     for I := 0 to high(Playlists[Index].Items) do
     begin
+      if Playlists[Index].Items[I].SongFile <> '' then
+        TextStream.WriteLine('#USDX_FILE: ' + Playlists[Index].Items[I].SongFile);
       TextStream.WriteLine(Playlists[Index].Items[I].Artist + ' : ' + Playlists[Index].Items[I].Title);
     end;
   except
@@ -588,6 +624,7 @@ begin
     Playlists[P].Items[Len].SongID  := SongID;
     Playlists[P].Items[Len].Title   := CatSongs.Song[SongID].Title;
     Playlists[P].Items[Len].Artist  := CatSongs.Song[SongID].Artist;
+    Playlists[P].Items[Len].SongFile := '';
 
     //Save Changes
     SavePlayList(P);
@@ -699,6 +736,31 @@ begin
   end;
 end;
 
+function TPlayListManager.FindSongIndexByFile(const SongFile: UTF8String): Integer;
+var
+  I: Integer;
+  RequestedFile: IPath;
+begin
+  Result := -1;
+  RequestedFile := Path(SongFile).GetAbsolutePath;
+  for I := Low(CatSongs.Song) to High(CatSongs.Song) do
+  begin
+    if CatSongs.Song[I].Main or not Assigned(CatSongs.Song[I].Path) or
+       not Assigned(CatSongs.Song[I].FileName) then
+      Continue;
+    if CatSongs.Song[I].Path.Append(CatSongs.Song[I].FileName).GetAbsolutePath.Equals(RequestedFile) then
+      Exit(I);
+  end;
+end;
+
+function TPlayListManager.FindSongIndex(const Item: TPlaylistItem): Integer;
+begin
+  if Item.SongFile <> '' then
+    Result := FindSongIndexByFile(Item.SongFile)
+  else
+    Result := FindSongIndexByNames(Item.Artist, Item.Title);
+end;
+
 procedure TPlayListManager.MoveSongIndex(const OldIndex, NewIndex: Integer);
 var
   SongRef: TSong;
@@ -733,8 +795,7 @@ begin
   begin
     for I := 0 to High(Playlists[P].Items) do
     begin
-      NewIndex := FindSongIndexByNames(Playlists[P].Items[I].Artist,
-                                       Playlists[P].Items[I].Title);
+      NewIndex := FindSongIndex(Playlists[P].Items[I]);
       if NewIndex = -1 then
         Log.LogError('Could not reindex playlist entry: ' + Playlists[P].Items[I].Artist + ' - ' + Playlists[P].Items[I].Title);
       Playlists[P].Items[I].SongID := NewIndex;
@@ -754,8 +815,7 @@ begin
 
   for I := High(Playlists[Index].Items) downto 0 do
   begin
-    SongIdx := FindSongIndexByNames(Playlists[Index].Items[I].Artist,
-                                    Playlists[Index].Items[I].Title);
+    SongIdx := FindSongIndex(Playlists[Index].Items[I]);
     if SongIdx <> -1 then
       MoveSongIndex(SongIdx, 0);
   end;
